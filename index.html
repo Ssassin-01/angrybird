@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Modern Angry Birds 2 - Stage 2 Slingshot</title>
+  <style>
+    :root {
+      color-scheme: light;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.2), transparent 45%),
+        linear-gradient(180deg, #14324a 0%, #08131d 100%);
+      font-family: "Trebuchet MS", "Verdana", sans-serif;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .game-shell {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    canvas {
+      width: 1280px;
+      height: 720px;
+      display: block;
+      transform-origin: center center;
+      touch-action: none;
+      border-radius: 24px;
+      box-shadow:
+        0 36px 80px rgba(0, 0, 0, 0.35),
+        0 0 0 1px rgba(255, 255, 255, 0.08);
+      image-rendering: auto;
+      cursor: default;
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <!--
+      width / height HTML 속성은 반드시 1280 x 720으로 고정합니다.
+      화면 크기 변화는 CSS transform으로만 처리해야 좌표계가 흔들리지 않습니다.
+    -->
+    <canvas
+      id="game-canvas"
+      width="1280"
+      height="720"
+      aria-label="Modern Angry Birds 2 style physics playground"
+    ></canvas>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+  <script>
+    class AngryBirdsBootstrap {
+      constructor() {
+        // 게임의 기준 좌표계입니다. 이후 모든 배치 계산은 이 크기를 기준으로 진행합니다.
+        this.width = 1280;
+        this.height = 720;
+
+        // DOM은 캔버스 하나만 사용하고, 모든 그래픽은 이 캔버스 안에서 그립니다.
+        this.canvas = document.getElementById("game-canvas");
+
+        // Matter.js 주요 모듈을 구조 분해해서 별칭으로 보관합니다.
+        this.Engine = Matter.Engine;
+        this.Render = Matter.Render;
+        this.Runner = Matter.Runner;
+        this.World = Matter.World;
+        this.Bodies = Matter.Bodies;
+        this.Body = Matter.Body;
+        this.Constraint = Matter.Constraint;
+        this.Mouse = Matter.Mouse;
+        this.MouseConstraint = Matter.MouseConstraint;
+        this.Events = Matter.Events;
+        this.Vector = Matter.Vector;
+
+        // 나중에 커스텀 렌더링으로 확장하기 쉽도록 엔진/렌더/러너를 멤버로 분리합니다.
+        this.engine = null;
+        this.world = null;
+        this.render = null;
+        this.runner = null;
+        this.mouse = null;
+        this.mouseConstraint = null;
+
+        // requestAnimationFrame ID를 저장해 두면 추후 정지/재시작 제어가 쉬워집니다.
+        this.renderFrameId = null;
+
+        // 2단계부터는 새총 상호작용에 필요한 상태를 명확히 분리해 둡니다.
+        // 새총 다리가 바닥에 자연스럽게 닿아 보이도록 앵커를 조금 더 아래로 내립니다.
+        this.anchorPoint = { x: 250, y: 583 };
+        this.birdRadius = 20;
+        this.maxDragDistance = 100;
+        this.launchPower = 0.18;
+        this.trajectoryDotCount = 13;
+        this.trajectoryStep = 5;
+        this.isDraggingBird = false;
+        this.hasBirdLaunched = false;
+        this.bird = null;
+        this.slingshotConstraint = null;
+        this.pointerGrabPadding = 16;
+        this.activePointerId = null;
+        this.constraintIdleStiffness = 0.12;
+        this.constraintDragStiffness = 0;
+        this.pointerWorldPosition = {
+          x: this.anchorPoint.x,
+          y: this.anchorPoint.y
+        };
+
+        // MouseConstraint가 새만 집을 수 있도록 충돌 카테고리를 분리합니다.
+        this.collisionCategories = {
+          default: 0x0001,
+          bird: 0x0002
+        };
+
+        this.transparentRender = {
+          fillStyle: "rgba(0, 0, 0, 0)",
+          strokeStyle: "rgba(0, 0, 0, 0)",
+          lineWidth: 0
+        };
+
+        // 배경/테마 색상도 모아서 관리하면 이후 아트 교체가 편합니다.
+        this.palette = {
+          skyTop: "#69d8ff",
+          skyMid: "#9ee8ff",
+          skyBottom: "#d9fbff",
+          islandGrass: "#7dde3a",
+          islandShadow: "#235f3f",
+          cliffLight: "#f6de9d",
+          cliffMid: "#c1a16a",
+          cliffDark: "#6c5d44",
+          wood: "#c7843d",
+          woodDark: "#7f4a25",
+          glass: "rgba(176, 236, 255, 0.65)",
+          pig: "#7fe14b",
+          pigDark: "#3d9220",
+          birdRed: "#db2a2a"
+        };
+      }
+
+      init() {
+        this.createEngine();
+        this.createRenderer();
+        this.createStaticWorld();
+        this.createBirdAndSlingshot();
+        this.createShowcaseObjects();
+        this.createMouseController();
+        this.registerInteractionEvents();
+        this.bindResize();
+        this.bindTouchGuards();
+        this.bindPointerEvents();
+        this.startSimulation();
+      }
+
+      createEngine() {
+        // Matter.Engine은 물리 계산의 중심입니다.
+        this.engine = this.Engine.create();
+        this.world = this.engine.world;
+
+        // 중력은 아래 방향(y+)으로 작용합니다.
+        this.world.gravity.x = 0;
+        this.world.gravity.y = 1.05;
+      }
+
+      createRenderer() {
+        // Matter.Render는 현재 단계의 디버그/프로토타입 렌더러 역할입니다.
+        // 나중에 이미지 기반 커스텀 렌더러로 바꿀 때도 render 인스턴스를 그대로 재사용할 수 있습니다.
+        this.render = this.Render.create({
+          canvas: this.canvas,
+          engine: this.engine,
+          options: {
+            width: this.width,
+            height: this.height,
+            wireframes: false,
+            background: "transparent",
+            pixelRatio: 1
+          }
+        });
+
+        // 기본 Matter 렌더 캔버스는 투명하게 유지해서,
+        // 같은 캔버스 위에 우리가 직접 배경/장식 레이어를 깔 수 있게 합니다.
+        this.render.canvas.style.background = "transparent";
+
+        // 2단계 요구사항: afterRender에서 점선 궤적을 그릴 수 있도록 이벤트를 등록합니다.
+        this.Events.on(this.render, "afterRender", () => {
+          this.drawTrajectoryDots();
+        });
+      }
+
+      createStaticWorld() {
+        // 바닥: y 700 부근에서 전체 월드를 지지하는 큰 정적 바디입니다.
+        const ground = this.Bodies.rectangle(this.width / 2, 710, 1500, 70, {
+          isStatic: true,
+          friction: 0.95,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: "#6b8f3a",
+            strokeStyle: "#37511a",
+            lineWidth: 6
+          }
+        });
+
+        // 좌우 벽, 천장은 물리 객체 이탈 방지용이라 완전히 투명하게 만듭니다.
+        const leftWall = this.Bodies.rectangle(-25, this.height / 2, 50, this.height + 400, {
+          isStatic: true,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: this.transparentRender
+        });
+
+        const rightWall = this.Bodies.rectangle(this.width + 25, this.height / 2, 50, this.height + 400, {
+          isStatic: true,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: this.transparentRender
+        });
+
+        const ceiling = this.Bodies.rectangle(this.width / 2, -25, this.width + 400, 50, {
+          isStatic: true,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: this.transparentRender
+        });
+
+        // 발사대 섬의 시각 요소는 drawBackdropLayer에서 직접 그리고 있으므로,
+        // 여기 물리 바디는 "입력을 방해하지 않을 정도로 낮고 얇게"만 둡니다.
+        // 이렇게 하면 초록색 디버그 박스가 새를 당길 때 손에 걸리는 느낌을 주지 않습니다.
+        const launcherIsland = this.Bodies.rectangle(230, 695, 260, 18, {
+          isStatic: true,
+          chamfer: { radius: 8 },
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: this.transparentRender
+        });
+
+        const targetIsland = this.Bodies.rectangle(980, 695, 430, 18, {
+          isStatic: true,
+          chamfer: { radius: 8 },
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: this.transparentRender
+        });
+
+        this.World.add(this.world, [
+          ground,
+          leftWall,
+          rightWall,
+          ceiling,
+          launcherIsland,
+          targetIsland
+        ]);
+      }
+
+      createBirdAndSlingshot() {
+        // 발사체는 앵커와 같은 위치에서 시작합니다.
+        // 충돌 카테고리를 bird로 분리해 두면 MouseConstraint가 이 새만 집게 만들 수 있습니다.
+        this.bird = this.Bodies.circle(
+          this.anchorPoint.x,
+          this.anchorPoint.y,
+          this.birdRadius,
+          {
+            density: 0.004,
+            restitution: 0.28,
+            friction: 0.03,
+            // 궤적 점선과 실제 비행 궤도를 최대한 일치시키기 위해 공기 저항은 제거합니다.
+            // 그러면 x는 1차, y는 2차 식으로 예측이 가능해져 가벼운 계산으로도 정확도가 높아집니다.
+            frictionAir: 0,
+            collisionFilter: {
+              category: this.collisionCategories.bird
+            },
+            render: {
+              fillStyle: this.palette.birdRed,
+              strokeStyle: "#8e1515",
+              lineWidth: 5
+            }
+          }
+        );
+
+        // Constraint가 실제 고무줄 역할을 합니다.
+        // 길이(length)를 0으로 두면 앵커에 붙어 있다가 당겼을 때 탄성이 생깁니다.
+        this.slingshotConstraint = this.Constraint.create({
+          pointA: { x: this.anchorPoint.x, y: this.anchorPoint.y },
+          bodyB: this.bird,
+          stiffness: this.constraintIdleStiffness,
+          damping: 0.04,
+          length: 0,
+          render: {
+            visible: false
+          }
+        });
+
+        this.World.add(this.world, [this.bird, this.slingshotConstraint]);
+      }
+
+      createShowcaseObjects() {
+        // 타깃 구조물은 "가만히 있어도 무너지지 않는" 쪽으로 다시 배치합니다.
+        // 기준선은 타깃 발판 윗면(686)이며, 모든 부품이 그 위에 자연스럽게 얹히도록 계산합니다.
+        const platformTopY = 686;
+
+        const leftColumn = this.Bodies.rectangle(920, platformTopY - 65, 26, 130, {
+          chamfer: { radius: 8 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.glass,
+            strokeStyle: "#78b8d7",
+            lineWidth: 4
+          }
+        });
+
+        const rightColumn = this.Bodies.rectangle(1030, platformTopY - 65, 26, 130, {
+          chamfer: { radius: 8 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.glass,
+            strokeStyle: "#78b8d7",
+            lineWidth: 4
+          }
+        });
+
+        const upperLeftColumn = this.Bodies.rectangle(945, 489, 24, 86, {
+          chamfer: { radius: 8 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.glass,
+            strokeStyle: "#78b8d7",
+            lineWidth: 4
+          }
+        });
+
+        const upperRightColumn = this.Bodies.rectangle(1005, 489, 24, 86, {
+          chamfer: { radius: 8 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.glass,
+            strokeStyle: "#78b8d7",
+            lineWidth: 4
+          }
+        });
+
+        const lowerBeam = this.Bodies.rectangle(975, 544, 188, 24, {
+          chamfer: { radius: 6 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.wood,
+            strokeStyle: this.palette.woodDark,
+            lineWidth: 4
+          }
+        });
+
+        const midBeam = this.Bodies.rectangle(975, 434, 128, 20, {
+          chamfer: { radius: 6 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.wood,
+            strokeStyle: this.palette.woodDark,
+            lineWidth: 4
+          }
+        });
+
+        const pigLarge = this.Bodies.circle(975, 505, 28, {
+          restitution: 0.2,
+          density: 0.0025,
+          friction: 0.35,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.pig,
+            strokeStyle: this.palette.pigDark,
+            lineWidth: 5
+          }
+        });
+
+        const pigSmall = this.Bodies.circle(975, 395, 24, {
+          restitution: 0.2,
+          density: 0.002,
+          friction: 0.35,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: this.palette.pig,
+            strokeStyle: this.palette.pigDark,
+            lineWidth: 5
+          }
+        });
+
+        const crateLeft = this.Bodies.rectangle(892, platformTopY - 18, 36, 36, {
+          chamfer: { radius: 4 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: "#d79e4a",
+            strokeStyle: "#8b531d",
+            lineWidth: 4
+          }
+        });
+
+        const crateRight = this.Bodies.rectangle(1058, platformTopY - 18, 36, 36, {
+          chamfer: { radius: 4 },
+          friction: 0.35,
+          restitution: 0.08,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: {
+            fillStyle: "#d79e4a",
+            strokeStyle: "#8b531d",
+            lineWidth: 4
+          }
+        });
+
+        this.World.add(this.world, [
+          leftColumn,
+          rightColumn,
+          upperLeftColumn,
+          upperRightColumn,
+          lowerBeam,
+          midBeam,
+          pigLarge,
+          pigSmall,
+          crateLeft,
+          crateRight
+        ]);
+      }
+
+      createMouseController() {
+        // Mouse는 현재 캔버스의 화면상 크기를 기준으로 좌표를 읽습니다.
+        // 우리 게임은 HTML width/height는 고정이고 CSS만 스케일되므로,
+        // 리사이즈 때마다 별도로 scale을 맞춰 줘야 드래그 좌표가 정확하게 들어옵니다.
+        this.mouse = this.Mouse.create(this.canvas);
+        this.updateMouseScale();
+
+        this.mouseConstraint = this.MouseConstraint.create(this.engine, {
+          mouse: this.mouse,
+          collisionFilter: {
+            mask: 0
+          },
+          constraint: {
+            stiffness: 0.2,
+            render: {
+              visible: false
+            }
+          }
+        });
+
+        this.render.mouse = this.mouse;
+        this.World.add(this.world, this.mouseConstraint);
+      }
+
+      registerInteractionEvents() {
+        // 드래그 중 제한 로직:
+        // 포인터 이벤트에서 저장해 둔 좌표를 새 위치에 직접 반영하되, 앵커 기준 반경 100px 원 안으로만 이동시킵니다.
+        // 즉, 사용자가 멀리 드래그해도 실제 새는 고정 반경 경계까지만 따라옵니다.
+        this.Events.on(this.engine, "beforeUpdate", () => {
+          if (!this.isDraggingBird || this.hasBirdLaunched || !this.bird) {
+            return;
+          }
+
+          this.slingshotConstraint.stiffness = this.constraintDragStiffness;
+          this.moveBirdToPointer();
+
+          // 드래그 중에는 사용자가 원하는 방향만 보이고 흔들림은 최소화되도록
+          // 속도와 회전을 잠깐 0으로 고정합니다.
+          this.Body.setVelocity(this.bird, { x: 0, y: 0 });
+          this.Body.setAngularVelocity(this.bird, 0);
+          this.Body.setAngle(this.bird, 0);
+        });
+      }
+
+      bindResize() {
+        // 캔버스 내부 해상도는 고정하고, CSS 크기만 조절하는 Letterbox 스케일링입니다.
+        const resize = () => {
+          const scale = Math.min(
+            window.innerWidth / this.width,
+            window.innerHeight / this.height
+          );
+
+          const scaledWidth = this.width * scale;
+          const scaledHeight = this.height * scale;
+
+          this.canvas.style.width = `${scaledWidth}px`;
+          this.canvas.style.height = `${scaledHeight}px`;
+          this.updateMouseScale();
+        };
+
+        resize();
+        window.addEventListener("resize", resize);
+      }
+
+      bindTouchGuards() {
+        // 모바일에서 캔버스를 손가락으로 당길 때
+        // 브라우저의 기본 스크롤 / 새로고침 제스처가 끼어들지 않도록 막습니다.
+        this.canvas.style.touchAction = "none";
+
+        ["touchstart", "touchmove", "touchend", "touchcancel", "gesturestart", "gesturechange"].forEach((eventName) => {
+          this.canvas.addEventListener(
+            eventName,
+            (event) => {
+              event.preventDefault();
+            },
+            { passive: false }
+          );
+        });
+      }
+
+      bindPointerEvents() {
+        // 실제 드래그 입력은 Pointer Events로 직접 처리합니다.
+        // 이 방식은 마우스/터치/펜을 하나의 코드 경로에서 안정적으로 다룰 수 있어서
+        // 모바일 터치 미동작 문제를 피하는 데 훨씬 유리합니다.
+        this.canvas.addEventListener(
+          "pointerdown",
+          (event) => {
+            if (this.hasBirdLaunched || !this.bird) {
+              return;
+            }
+
+            event.preventDefault();
+            this.updatePointerWorldPosition(event);
+
+            if (!this.isPointerInsideBird(this.pointerWorldPosition)) {
+              return;
+            }
+
+            this.activePointerId = event.pointerId;
+            this.isDraggingBird = true;
+            this.slingshotConstraint.stiffness = this.constraintDragStiffness;
+            this.Body.setVelocity(this.bird, { x: 0, y: 0 });
+            this.Body.setAngularVelocity(this.bird, 0);
+
+            if (this.canvas.setPointerCapture) {
+              this.canvas.setPointerCapture(event.pointerId);
+            }
+
+            this.moveBirdToPointer();
+          },
+          { passive: false }
+        );
+
+        this.canvas.addEventListener(
+          "pointermove",
+          (event) => {
+            if (this.activePointerId !== null && event.pointerId !== this.activePointerId) {
+              return;
+            }
+
+            event.preventDefault();
+            this.updatePointerWorldPosition(event);
+
+            if (this.isDraggingBird) {
+              this.moveBirdToPointer();
+            }
+          },
+          { passive: false }
+        );
+
+        const releasePointer = (event) => {
+          if (this.activePointerId === null || event.pointerId !== this.activePointerId) {
+            return;
+          }
+
+          event.preventDefault();
+          this.updatePointerWorldPosition(event);
+          this.activePointerId = null;
+
+          if (this.canvas.releasePointerCapture && this.canvas.hasPointerCapture?.(event.pointerId)) {
+            this.canvas.releasePointerCapture(event.pointerId);
+          }
+
+          if (!this.isDraggingBird || this.hasBirdLaunched) {
+            return;
+          }
+
+          this.isDraggingBird = false;
+          this.launchBird(this.getLaunchStateFromPosition(this.getClampedDragPosition()));
+        };
+
+        this.canvas.addEventListener("pointerup", releasePointer, { passive: false });
+        this.canvas.addEventListener("pointercancel", releasePointer, { passive: false });
+        this.canvas.addEventListener("lostpointercapture", () => {
+          if (this.isDraggingBird && !this.hasBirdLaunched) {
+            this.isDraggingBird = false;
+            this.launchBird(this.getLaunchStateFromPosition(this.getClampedDragPosition()));
+          }
+
+          this.activePointerId = null;
+        });
+      }
+
+      updateMouseScale() {
+        if (!this.mouse) {
+          return;
+        }
+
+        const bounds = this.canvas.getBoundingClientRect();
+
+        if (!bounds.width || !bounds.height) {
+          return;
+        }
+
+        this.Mouse.setScale(this.mouse, {
+          x: this.width / bounds.width,
+          y: this.height / bounds.height
+        });
+
+        this.Mouse.setOffset(this.mouse, { x: 0, y: 0 });
+      }
+
+      startSimulation() {
+        // Runner는 물리 엔진 업데이트만 담당합니다.
+        this.runner = this.Runner.create();
+        this.Runner.run(this.runner, this.engine);
+
+        // 렌더는 직접 requestAnimationFrame으로 감싸서,
+        // Matter 디버그 렌더 + 커스텀 배경 드로잉을 한 캔버스에서 함께 처리합니다.
+        const renderLoop = () => {
+          this.Render.world(this.render);
+          this.drawBackdropLayer();
+          this.drawForegroundLayer();
+          this.renderFrameId = window.requestAnimationFrame(renderLoop);
+        };
+
+        renderLoop();
+      }
+
+      drawBackdropLayer() {
+        const ctx = this.render.context;
+
+        // destination-over를 쓰면 이미 그려진 Matter 바디 뒤에 배경이 깔립니다.
+        // 즉, 물리 객체는 그대로 두고 동일한 캔버스에서 하늘/섬 풍경을 뒤쪽 레이어로 추가할 수 있습니다.
+        ctx.save();
+        ctx.globalCompositeOperation = "destination-over";
+
+        const skyGradient = ctx.createLinearGradient(0, 0, 0, this.height);
+        skyGradient.addColorStop(0, this.palette.skyTop);
+        skyGradient.addColorStop(0.55, this.palette.skyMid);
+        skyGradient.addColorStop(1, this.palette.skyBottom);
+        ctx.fillStyle = skyGradient;
+        ctx.fillRect(0, 0, this.width, this.height);
+
+        this.drawSunGlow(ctx);
+        this.drawCloudBank(ctx);
+        this.drawFarIslands(ctx);
+        this.drawIslandBase(ctx, 230, 635, 340, 165);
+        this.drawIslandBase(ctx, 980, 660, 420, 190);
+
+        ctx.restore();
+      }
+
+      drawForegroundLayer() {
+        const ctx = this.render.context;
+        ctx.save();
+
+        this.drawSlingshot(ctx);
+        this.drawTopHudLabel(ctx);
+
+        ctx.restore();
+      }
+
+      drawSunGlow(ctx) {
+        const glow = ctx.createRadialGradient(930, 145, 30, 930, 145, 210);
+        glow.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+        glow.addColorStop(0.18, "rgba(255, 247, 185, 0.65)");
+        glow.addColorStop(0.45, "rgba(255, 247, 185, 0.18)");
+        glow.addColorStop(1, "rgba(255, 247, 185, 0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(930, 145, 220, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      drawCloudBank(ctx) {
+        const cloudShapes = [
+          [250, 135, 140, 46, 0.28],
+          [410, 95, 155, 52, 0.22],
+          [735, 225, 110, 38, 0.2],
+          [1080, 120, 170, 56, 0.16],
+          [890, 315, 150, 48, 0.13],
+          [1110, 460, 220, 72, 0.1]
+        ];
+
+        cloudShapes.forEach(([x, y, w, h, alpha]) => {
+          ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+          ctx.beginPath();
+          ctx.ellipse(x, y, w, h, -0.2, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      drawFarIslands(ctx) {
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+
+        [
+          { x: 1020, y: 130, w: 210, h: 260 },
+          { x: 1180, y: 80, w: 240, h: 330 },
+          { x: 800, y: 390, w: 190, h: 180 }
+        ].forEach((shape) => {
+          const gradient = ctx.createLinearGradient(shape.x, shape.y, shape.x, shape.y + shape.h);
+          gradient.addColorStop(0, "rgba(77, 182, 255, 0.55)");
+          gradient.addColorStop(1, "rgba(42, 102, 175, 0.12)");
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.moveTo(shape.x, shape.y + 40);
+          ctx.quadraticCurveTo(shape.x + shape.w * 0.45, shape.y - 20, shape.x + shape.w, shape.y + 40);
+          ctx.lineTo(shape.x + shape.w * 0.65, shape.y + shape.h);
+          ctx.lineTo(shape.x + shape.w * 0.35, shape.y + shape.h);
+          ctx.closePath();
+          ctx.fill();
+        });
+
+        ctx.restore();
+      }
+
+      drawIslandBase(ctx, x, y, width, height) {
+        const left = x - width / 2;
+        const top = y - height / 2;
+
+        const cliffGradient = ctx.createLinearGradient(left, top, left, top + height);
+        cliffGradient.addColorStop(0, this.palette.cliffLight);
+        cliffGradient.addColorStop(0.45, this.palette.cliffMid);
+        cliffGradient.addColorStop(1, this.palette.cliffDark);
+
+        ctx.fillStyle = cliffGradient;
+        ctx.beginPath();
+        ctx.moveTo(left + 36, top + 15);
+        ctx.bezierCurveTo(left - 10, top + 55, left + 35, top + 120, left + 58, top + height - 25);
+        ctx.bezierCurveTo(left + width * 0.35, top + height + 25, left + width * 0.65, top + height + 10, left + width - 34, top + height - 22);
+        ctx.bezierCurveTo(left + width - 10, top + 135, left + width + 10, top + 48, left + width - 22, top + 12);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(69, 50, 28, 0.45)";
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.fillStyle = this.palette.islandGrass;
+        ctx.beginPath();
+        ctx.moveTo(left + 12, top + 18);
+        ctx.quadraticCurveTo(x, top - 22, left + width - 12, top + 18);
+        ctx.quadraticCurveTo(x, top + 52, left + 12, top + 18);
+        ctx.fill();
+
+        ctx.fillStyle = "rgba(40, 103, 56, 0.26)";
+        ctx.beginPath();
+        ctx.ellipse(x - 20, top + 60, width * 0.26, 18, -0.12, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      drawSlingshot(ctx) {
+        const x = this.anchorPoint.x - 34;
+        const y = this.anchorPoint.y + 58;
+        const birdPosition = this.bird ? this.bird.position : this.anchorPoint;
+
+        ctx.save();
+        ctx.translate(x, y);
+
+        // 새총 끈은 앵커가 살아 있을 때만 그립니다.
+        // 당기고 있을 때는 끈이 현재 새 위치를 따라오고, 발사 후에는 사라집니다.
+        if (this.slingshotConstraint && !this.hasBirdLaunched) {
+          ctx.strokeStyle = "#5a2d10";
+          ctx.lineWidth = 6;
+          ctx.lineCap = "round";
+
+          ctx.beginPath();
+          ctx.moveTo(8, -132);
+          ctx.lineTo(birdPosition.x - x, birdPosition.y - y);
+          ctx.lineTo(38, -134);
+          ctx.stroke();
+
+          ctx.fillStyle = "#3c2415";
+          ctx.beginPath();
+          this.drawRoundedRect(
+            ctx,
+            birdPosition.x - x - 16,
+            birdPosition.y - y - 8,
+            32,
+            16,
+            7
+          );
+          ctx.fill();
+        }
+
+        ctx.lineCap = "round";
+        ctx.strokeStyle = "#6d3c14";
+        ctx.lineWidth = 18;
+
+        ctx.beginPath();
+        ctx.moveTo(-4, 34);
+        ctx.quadraticCurveTo(-18, -20, 0, -135);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(42, 34);
+        ctx.quadraticCurveTo(50, -22, 34, -137);
+        ctx.stroke();
+
+        ctx.strokeStyle = "#4e260a";
+        ctx.lineWidth = 8;
+        ctx.beginPath();
+        ctx.moveTo(4, -132);
+        ctx.lineTo(34, -134);
+        ctx.stroke();
+
+        ctx.fillStyle = "#7a4421";
+        ctx.beginPath();
+        this.drawRoundedRect(ctx, -14, 18, 62, 22, 10);
+        ctx.fill();
+
+        ctx.restore();
+      }
+
+      drawTopHudLabel(ctx) {
+        ctx.save();
+
+        const panelX = 930;
+        const panelY = 26;
+        const panelWidth = 285;
+        const panelHeight = 56;
+
+        const panelGradient = ctx.createLinearGradient(panelX, panelY, panelX, panelY + panelHeight);
+        panelGradient.addColorStop(0, "rgba(49, 70, 91, 0.88)");
+        panelGradient.addColorStop(1, "rgba(26, 40, 52, 0.88)");
+
+        ctx.fillStyle = panelGradient;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        this.drawRoundedRect(ctx, panelX, panelY, panelWidth, panelHeight, 22);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+        ctx.font = "bold 20px Trebuchet MS, Verdana, sans-serif";
+        ctx.fillText("Modern Angry Birds 2", panelX + 20, panelY + 24);
+
+        ctx.fillStyle = "rgba(248, 223, 100, 0.96)";
+        ctx.font = "bold 14px Trebuchet MS, Verdana, sans-serif";
+        ctx.fillText("Stage 2  Slingshot + Trajectory", panelX + 20, panelY + 45);
+
+        ctx.restore();
+      }
+
+      launchBird(launchState = this.getLaunchState()) {
+        if (!this.bird || !this.slingshotConstraint || this.hasBirdLaunched) {
+          return;
+        }
+
+        this.World.remove(this.world, this.slingshotConstraint);
+        this.slingshotConstraint = null;
+        this.hasBirdLaunched = true;
+
+        // 발사 후에는 다시 잡히지 않도록 충돌 카테고리를 기본값으로 바꿉니다.
+        this.bird.collisionFilter.category = this.collisionCategories.default;
+
+        // 점선 궤적 계산에 사용한 위치/속도를 실제 발사에도 그대로 사용합니다.
+        // 이렇게 하면 "예상 경로"와 "실제 첫 프레임"의 기준값이 완전히 같아집니다.
+        this.Body.setPosition(this.bird, launchState.position);
+        this.Body.setAngle(this.bird, 0);
+        this.Body.setAngularVelocity(this.bird, 0);
+        this.bird.force.x = 0;
+        this.bird.force.y = 0;
+        this.bird.torque = 0;
+        this.Body.setVelocity(this.bird, launchState.velocity);
+      }
+
+      moveBirdToPointer() {
+        if (!this.bird) {
+          return;
+        }
+
+        const dragPosition = this.getClampedDragPosition();
+        this.Body.setPosition(this.bird, dragPosition);
+      }
+
+      clampBirdToAnchorRadius() {
+        if (!this.bird) {
+          return;
+        }
+
+        const pullVector = this.Vector.sub(this.bird.position, this.anchorPoint);
+        const currentDistance = this.Vector.magnitude(pullVector);
+
+        if (currentDistance <= this.maxDragDistance) {
+          return;
+        }
+
+        const clampedPosition = this.Vector.add(
+          this.anchorPoint,
+          this.Vector.mult(
+            this.Vector.normalise(pullVector),
+            this.maxDragDistance
+          )
+        );
+
+        this.Body.setPosition(this.bird, clampedPosition);
+      }
+
+      isPointerInsideBird(pointerPosition = this.pointerWorldPosition) {
+        if (!this.bird) {
+          return false;
+        }
+
+        const pointerVector = this.Vector.sub(pointerPosition, this.bird.position);
+        const pointerDistance = this.Vector.magnitude(pointerVector);
+
+        return pointerDistance <= this.birdRadius + this.pointerGrabPadding;
+      }
+
+      updatePointerWorldPosition(event) {
+        this.pointerWorldPosition = this.screenToWorldPosition(event.clientX, event.clientY);
+      }
+
+      screenToWorldPosition(clientX, clientY) {
+        const bounds = this.canvas.getBoundingClientRect();
+
+        return {
+          x: ((clientX - bounds.left) / bounds.width) * this.width,
+          y: ((clientY - bounds.top) / bounds.height) * this.height
+        };
+      }
+
+      getLaunchVelocity() {
+        const launchPosition = this.isDraggingBird
+          ? this.getClampedDragPosition()
+          : (this.bird ? this.bird.position : this.anchorPoint);
+        const stretchVector = this.Vector.sub(this.anchorPoint, launchPosition);
+
+        return {
+          x: stretchVector.x * this.launchPower,
+          y: stretchVector.y * this.launchPower
+        };
+      }
+
+      getLaunchState() {
+        const position = this.isDraggingBird
+          ? this.getClampedDragPosition()
+          : (this.bird ? { x: this.bird.position.x, y: this.bird.position.y } : this.anchorPoint);
+
+        return this.getLaunchStateFromPosition(position);
+      }
+
+      getLaunchStateFromPosition(position) {
+        return {
+          position: {
+            x: position.x,
+            y: position.y
+          },
+          velocity: this.getLaunchVelocityFromPosition(position)
+        };
+      }
+
+      getLaunchVelocityFromPosition(position) {
+        const stretchVector = this.Vector.sub(this.anchorPoint, position);
+
+        return {
+          x: stretchVector.x * this.launchPower,
+          y: stretchVector.y * this.launchPower
+        };
+      }
+
+      getClampedDragPosition(position = this.pointerWorldPosition) {
+        const pullVector = this.Vector.sub(position, this.anchorPoint);
+        const currentDistance = this.Vector.magnitude(pullVector);
+
+        if (currentDistance <= this.maxDragDistance) {
+          return {
+            x: position.x,
+            y: position.y
+          };
+        }
+
+        return this.Vector.add(
+          this.anchorPoint,
+          this.Vector.mult(
+            this.Vector.normalise(pullVector),
+            this.maxDragDistance
+          )
+        );
+      }
+
+      drawTrajectoryDots() {
+        // 요구사항:
+        // 발사 전에만, 그리고 사용자가 실제로 새를 당기고 있는 동안에만 점선을 보여 줍니다.
+        // 발사 후에는 즉시 숨겨야 하므로 hasBirdLaunched 상태를 같이 확인합니다.
+        if (!this.isDraggingBird || this.hasBirdLaunched || !this.bird) {
+          return;
+        }
+
+        const ctx = this.render.context;
+        const launchState = this.getLaunchState();
+        const start = launchState.position;
+        const velocity = launchState.velocity;
+        const previewBody = this.Bodies.circle(start.x, start.y, this.birdRadius, {
+          frictionAir: this.bird.frictionAir
+        });
+
+        // 점선과 실제 발사가 같은 적분 규칙을 따르도록,
+        // 임시 body 하나에 실제 발사와 동일한 위치/속도를 넣고 Body.update를 반복합니다.
+        // 월드 전체를 복제하는 무거운 방식이 아니라 body 하나의 수학 상태만 따라가는 방식이라 가볍습니다.
+        this.Body.setPosition(previewBody, start);
+        this.Body.setVelocity(previewBody, velocity);
+
+        ctx.save();
+
+        for (let index = 1; index <= this.trajectoryDotCount; index += 1) {
+          for (let subStep = 0; subStep < this.trajectoryStep; subStep += 1) {
+            previewBody.force.x =
+              previewBody.mass *
+              this.engine.world.gravity.x *
+              this.engine.world.gravity.scale;
+            previewBody.force.y =
+              previewBody.mass *
+              this.engine.world.gravity.y *
+              this.engine.world.gravity.scale;
+
+            this.Body.update(previewBody, this.Body._baseDelta);
+
+            previewBody.force.x = 0;
+            previewBody.force.y = 0;
+            previewBody.torque = 0;
+          }
+
+          // 화면 밖 점은 굳이 더 그리지 않아도 되므로 조기 종료합니다.
+          if (
+            previewBody.position.x < 0 ||
+            previewBody.position.x > this.width ||
+            previewBody.position.y > this.height
+          ) {
+            break;
+          }
+
+          const radius = Math.max(1.8, 5 - index * 0.22);
+          const alpha = Math.max(0.16, 0.9 - index * 0.055);
+
+          ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+          ctx.beginPath();
+          ctx.arc(previewBody.position.x, previewBody.position.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+
+      drawRoundedRect(ctx, x, y, width, height, radius) {
+        const safeRadius = Math.min(radius, width / 2, height / 2);
+        ctx.moveTo(x + safeRadius, y);
+        ctx.lineTo(x + width - safeRadius, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+        ctx.lineTo(x + width, y + height - safeRadius);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+        ctx.lineTo(x + safeRadius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+        ctx.lineTo(x, y + safeRadius);
+        ctx.quadraticCurveTo(x, y, x + safeRadius, y);
+        ctx.closePath();
+      }
+    }
+
+    const game = new AngryBirdsBootstrap();
+    game.init();
+  </script>
+</body>
+</html>
