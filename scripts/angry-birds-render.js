@@ -374,10 +374,146 @@
       },
 
       drawStructureArt(ctx) {
-        this.crateBodies.forEach((body) => this.drawCrate(ctx, body));
-        this.glassBodies.forEach((body) => this.drawGlassBlock(ctx, body));
-        this.woodBodies.forEach((body) => this.drawWoodBlock(ctx, body));
-        this.pigBodies.forEach((body, index) => this.drawPig(ctx, body, index === 1));
+        const activeBodies = (list) => list.filter((body) => this.isRenderableBody(body));
+
+        activeBodies(this.crateBodies).forEach((body) => this.drawCrate(ctx, body));
+        activeBodies(this.stoneBodies).forEach((body) => this.drawStoneBlock(ctx, body));
+        activeBodies(this.glassBodies).forEach((body) => this.drawGlassBlock(ctx, body));
+        activeBodies(this.woodBodies).forEach((body) => this.drawWoodBlock(ctx, body));
+        activeBodies(this.tntBodies).forEach((body) => this.drawTntBlock(ctx, body));
+        activeBodies(this.pigBodies).forEach((body, index) => this.drawPig(ctx, body, index === 1));
+      },
+
+      drawBlockAtlasPreview(ctx) {
+        if (!this.showBlockAtlasPreview || !this.assetsLoaded || !this.images.blocks) {
+          return;
+        }
+
+        const groups =
+          this.spriteFrames &&
+          this.spriteFrames.objects &&
+          this.spriteFrames.objects.blockSpriteGroups;
+
+        if (!groups) {
+          return;
+        }
+
+        const panel = this.blockAtlasPreview;
+        const left = panel.x - panel.width / 2;
+        const top = panel.y - panel.height / 2;
+
+        ctx.save();
+
+        // 중앙 디버그 패널: atlas에서 읽어온 프레임들을 게임 화면 안에서 바로 확인합니다.
+        // L / M 그룹의 1~4단계 파손 프레임을 한 번에 보여 줍니다.
+        ctx.fillStyle = "rgba(17, 31, 47, 0.78)";
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        this.drawRoundedRect(ctx, left, top, panel.width, panel.height, 18);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "rgba(255,255,255,0.92)";
+        ctx.font = "bold 18px Trebuchet MS, Verdana, sans-serif";
+        ctx.fillText("Block Atlas Preview", left + 18, top + 28);
+        ctx.font = "12px Consolas, monospace";
+        ctx.fillStyle = "rgba(197, 225, 242, 0.88)";
+        ctx.fillText("1 -> 4 단계로 갈수록 더 많이 파손된 상태", left + 18, top + 48);
+
+        const sections = [
+          {
+            title: "L",
+            startY: top + 86,
+            sampleWidth: 116,
+            sampleHeight: 16,
+            rows: [
+              { label: "wood", frames: groups.L.wood },
+              { label: "ice", frames: groups.L.ice },
+              { label: "stone", frames: groups.L.stone }
+            ]
+          },
+          {
+            title: "M",
+            startY: top + 256,
+            sampleWidth: 98,
+            sampleHeight: 18,
+            rows: [
+              { label: "stone", frames: groups.M.stone },
+              { label: "wood", frames: groups.M.wood },
+              { label: "ice", frames: groups.M.ice }
+            ]
+          }
+        ];
+
+        sections.forEach((section) => {
+          ctx.fillStyle = "rgba(255, 244, 215, 0.92)";
+          ctx.font = "bold 14px Trebuchet MS, Verdana, sans-serif";
+          ctx.textAlign = "left";
+          ctx.fillText(section.title, left + 18, section.startY - 18);
+
+          section.rows.forEach((row, rowIndex) => {
+            const rowY = section.startY + rowIndex * 48;
+            ctx.fillStyle = "rgba(255,255,255,0.9)";
+            ctx.font = "bold 12px Trebuchet MS, Verdana, sans-serif";
+            ctx.fillText(row.label, left + 18, rowY + 4);
+
+            row.frames.forEach((frame, frameIndex) => {
+              const centerX = left + 128 + frameIndex * 140;
+              const centerY = rowY;
+
+              ctx.fillStyle = "rgba(255,255,255,0.06)";
+              ctx.fillRect(
+                centerX - section.sampleWidth / 2 - 4,
+                centerY - section.sampleHeight / 2 - 4,
+                section.sampleWidth + 8,
+                section.sampleHeight + 8
+              );
+
+              this.drawSpriteCentered(
+                ctx,
+                this.images.blocks,
+                frame,
+                centerX,
+                centerY,
+                section.sampleWidth,
+                section.sampleHeight,
+                0,
+                true
+              );
+
+              ctx.textAlign = "center";
+              ctx.fillStyle = "rgba(255,255,255,0.85)";
+              ctx.font = "11px Consolas, monospace";
+              ctx.fillText(`${frameIndex + 1}`, centerX, centerY + 22);
+              ctx.fillStyle = "rgba(188, 220, 240, 0.82)";
+              ctx.fillText(`${frame.x},${frame.y}`, centerX, centerY + 36);
+            });
+          });
+        });
+
+        const tntCenterX = left + panel.width - 96;
+        const tntCenterY = top + 194;
+        ctx.textAlign = "center";
+        ctx.fillStyle = "rgba(255, 244, 215, 0.92)";
+        ctx.font = "bold 14px Trebuchet MS, Verdana, sans-serif";
+        ctx.fillText("TNT", tntCenterX, top + 78);
+        this.drawSpriteCentered(
+          ctx,
+          this.images.blocks,
+          groups.tnt.default,
+          tntCenterX,
+          tntCenterY,
+          86,
+          90,
+          0,
+          true
+        );
+        ctx.fillStyle = "rgba(188, 220, 240, 0.82)";
+        ctx.font = "11px Consolas, monospace";
+        ctx.fillText(`${groups.tnt.default.x},${groups.tnt.default.y}`, tntCenterX, tntCenterY + 70);
+        ctx.textAlign = "left";
+        ctx.restore();
       },
 
       updateSlingshotPlacementFromGround() {
@@ -1693,7 +1829,8 @@
 
       drawGlassBlock(ctx, body) {
         if (this.assetsLoaded && this.images.blocks) {
-          const frame = (body.spriteMeta && body.spriteMeta.frame) || this.getBlockFrame(body, "ice");
+          const baseFrame = (body.spriteMeta && body.spriteMeta.frame) || this.getBlockFrame(body, "ice");
+          const frame = this.resolveDamageFrame(body, baseFrame);
           this.drawStructureSprite(ctx, body, frame);
           return;
         }
@@ -1712,7 +1849,8 @@
 
       drawWoodBlock(ctx, body) {
         if (this.assetsLoaded && this.images.blocks) {
-          const frame = (body.spriteMeta && body.spriteMeta.frame) || this.getBlockFrame(body, "wood");
+          const baseFrame = (body.spriteMeta && body.spriteMeta.frame) || this.getBlockFrame(body, "wood");
+          const frame = this.resolveDamageFrame(body, baseFrame);
           this.drawStructureSprite(ctx, body, frame);
           return;
         }
@@ -1721,6 +1859,37 @@
           ctx.fillStyle = "#c7843d";
           ctx.beginPath();
           this.drawRoundedRect(ctx, -width / 2, -height / 2, width, height, 6);
+          ctx.fill();
+        });
+      },
+
+      drawStoneBlock(ctx, body) {
+        if (this.assetsLoaded && this.images.blocks) {
+          const baseFrame = (body.spriteMeta && body.spriteMeta.frame) || this.getBlockFrame(body, "stone");
+          const frame = this.resolveDamageFrame(body, baseFrame);
+          this.drawStructureSprite(ctx, body, frame);
+          return;
+        }
+
+        this.drawBodyRect(ctx, body, (width, height) => {
+          ctx.fillStyle = "#8b97a9";
+          ctx.beginPath();
+          this.drawRoundedRect(ctx, -width / 2, -height / 2, width, height, 4);
+          ctx.fill();
+        });
+      },
+
+      drawTntBlock(ctx, body) {
+        if (this.assetsLoaded && this.images.blocks) {
+          const frame = (body.spriteMeta && body.spriteMeta.frame) || this.getBlockFrame(body, "tnt");
+          this.drawStructureSprite(ctx, body, frame);
+          return;
+        }
+
+        this.drawBodyRect(ctx, body, (width, height) => {
+          ctx.fillStyle = "#d64c38";
+          ctx.beginPath();
+          this.drawRoundedRect(ctx, -width / 2, -height / 2, width, height, 4);
           ctx.fill();
         });
       },
@@ -1747,11 +1916,37 @@
       attachBlockSprite(body, spriteMeta) {
         body.spriteMeta = {
           frame: spriteMeta.frame,
+          frames: spriteMeta.frames || null,
           baseRotation: spriteMeta.baseRotation || 0,
           material: spriteMeta.material || "generic",
           width: spriteMeta.width,
           height: spriteMeta.height
         };
+      },
+
+      resolveDamageFrame(body, fallbackFrame) {
+        const spriteMeta = body && body.spriteMeta;
+        const frames = spriteMeta && spriteMeta.frames;
+
+        if (!frames || !frames.length) {
+          return fallbackFrame;
+        }
+
+        if (!body || !body.isDestructible) {
+          return frames[0] || fallbackFrame;
+        }
+
+        const materialConfig = this.blockMaterialConfig[body.materialType];
+        if (!materialConfig) {
+          return frames[0] || fallbackFrame;
+        }
+
+        const maxHealth = Math.max(materialConfig.health, 1);
+        const currentHealth = Math.max(0, body.structureHealth || maxHealth);
+        const damageRatio = 1 - currentHealth / maxHealth;
+        const stageIndex = Math.min(frames.length - 1, Math.floor(damageRatio * frames.length));
+
+        return frames[stageIndex] || frames[0] || fallbackFrame;
       },
 
       drawImageCover(ctx, image, x, y, width, height, alpha = 1) {
@@ -1811,11 +2006,22 @@
         const height = (body.spriteMeta && body.spriteMeta.height) || (body.bounds.max.y - body.bounds.min.y);
         const ratio = width / Math.max(height, 1);
 
+        if (material === "tnt") {
+          return this.spriteFrames.objects.tntBox;
+        }
+
         if (material === "ice") {
           if (ratio > 1.65) {
             return this.spriteFrames.objects.iceBeam;
           }
           return this.spriteFrames.objects.iceSquare;
+        }
+
+        if (material === "stone") {
+          if (ratio > 1.65) {
+            return this.spriteFrames.objects.stoneBeam;
+          }
+          return this.spriteFrames.objects.stoneSquare;
         }
 
         if (ratio > 1.65) {
@@ -1854,15 +2060,6 @@
           height,
           rotation,
           true
-        );
-        this.drawStructureOutline(
-          ctx,
-          body.position.x,
-          body.position.y,
-          width,
-          height,
-          rotation,
-          body.spriteMeta ? body.spriteMeta.material : undefined
         );
       },
 
@@ -1911,6 +2108,12 @@
 
         if (material === "ice") {
           ctx.strokeStyle = "rgba(65, 104, 137, 0.88)";
+          ctx.lineWidth = 2;
+        } else if (material === "stone") {
+          ctx.strokeStyle = "rgba(70, 79, 96, 0.92)";
+          ctx.lineWidth = 2.2;
+        } else if (material === "tnt") {
+          ctx.strokeStyle = "rgba(107, 20, 12, 0.9)";
           ctx.lineWidth = 2;
         } else if (material === "wood") {
           ctx.strokeStyle = "rgba(108, 63, 24, 0.9)";

@@ -26,6 +26,27 @@
         this.bird.force.y = 0;
         this.bird.torque = 0;
         this.Body.setVelocity(this.bird, launchState.velocity);
+        this.armStructureDestruction();
+      },
+
+      armStructureDestruction(delayMs = 180) {
+        const timestamp = this.engine && this.engine.timing ? this.engine.timing.timestamp : 0;
+        const activateAt = timestamp + delayMs;
+        const targets = [
+          ...this.stoneBodies,
+          ...this.woodBodies,
+          ...this.glassBodies,
+          ...this.crateBodies,
+          ...this.tntBodies
+        ];
+
+        targets.forEach((body) => {
+          if (!this.isBodyInWorld(body)) {
+            return;
+          }
+
+          body.damageEnabledAt = activateAt;
+        });
       },
 
       moveBirdToPointer() {
@@ -141,6 +162,203 @@
             this.maxDragDistance
           )
         );
+      },
+
+      registerDestructionEvents() {
+        if (this.hasDestructionListeners) {
+          return;
+        }
+
+        this.hasDestructionListeners = true;
+
+        this.Events.on(this.engine, "collisionStart", (event) => {
+          event.pairs.forEach((pair) => this.handleStructureCollision(pair));
+        });
+
+        this.Events.on(this.engine, "afterUpdate", () => {
+          this.flushPendingDestruction();
+        });
+      },
+
+      handleStructureCollision(pair) {
+        const impact = this.getCollisionImpactScore(pair);
+        const { bodyA, bodyB } = pair;
+        const timestamp = this.engine && this.engine.timing ? this.engine.timing.timestamp : 0;
+        const involvesStatic = Boolean(bodyA.isStatic || bodyB.isStatic);
+
+        // 생성 직후 정착하는 접촉이나 아주 느린 미세 충돌은 피해로 취급하지 않습니다.
+        // 이 완충 구간이 있어야 블록들이 "서 있는 것"만으로 스스로 삭제되지 않습니다.
+        if (
+          impact.score <= 0 ||
+          (impact.maxSpeed < 1.8 && impact.normalSpeed < 1.2) ||
+          (involvesStatic && impact.maxSpeed < 3.4 && impact.normalSpeed < 2.2)
+        ) {
+          return;
+        }
+
+        [bodyA, bodyB].forEach((body) => {
+          if (!this.isBodyInWorld(body) || body.isStatic) {
+            return;
+          }
+
+          if (timestamp < (body.damageEnabledAt || 0)) {
+            return;
+          }
+
+          if (body.isTnt) {
+            if (impact.score >= this.tntConfig.triggerThreshold) {
+              this.queueTntExplosion(body);
+            }
+            return;
+          }
+
+          if (!body.isDestructible) {
+            return;
+          }
+
+          if (
+            impact.maxSpeed < (body.minImpactSpeed || 0) ||
+            impact.score < (body.minImpactScore || 0)
+          ) {
+            return;
+          }
+
+          const materialResistance =
+            body.materialType === "stone" ? 0.88 : body.materialType === "wood" ? 1 : body.materialType === "ice" ? 1.08 : 1;
+          const appliedDamage = impact.score * materialResistance;
+          body.structureHealth -= appliedDamage;
+
+          if (appliedDamage >= body.breakThreshold || body.structureHealth <= 0) {
+            this.queueBodyForRemoval(body);
+          }
+        });
+      },
+
+      getCollisionImpactScore(pair) {
+        const relativeVelocity = this.Vector.sub(pair.bodyA.velocity, pair.bodyB.velocity);
+        const relativeSpeed = this.Vector.magnitude(relativeVelocity);
+        const normal = pair.collision && pair.collision.normal
+          ? pair.collision.normal
+          : { x: 0, y: 0 };
+        const normalSpeed = Math.abs(relativeVelocity.x * normal.x + relativeVelocity.y * normal.y);
+        const combinedMass = Math.max(1, pair.bodyA.mass + pair.bodyB.mass);
+        const depth = pair.collision && typeof pair.collision.depth === "number"
+          ? pair.collision.depth
+          : 0;
+        const maxSpeed = Math.max(
+          this.Vector.magnitude(pair.bodyA.velocity || { x: 0, y: 0 }),
+          this.Vector.magnitude(pair.bodyB.velocity || { x: 0, y: 0 })
+        );
+        const tangentialSpeed = Math.sqrt(Math.max(0, relativeSpeed * relativeSpeed - normalSpeed * normalSpeed));
+        const compression = Math.max(0, depth - 1.5);
+        const massFactor = Math.sqrt(Math.min(12, combinedMass));
+
+        // 상대 속도보다 "실제로 정면으로 세게 박혔는지"를 더 크게 반영합니다.
+        // depth(겹침량)는 보조값 정도로만 쓰고, 정지 상태의 미세 흔들림으로는 피해가 거의 생기지 않게 낮춰 둡니다.
+        return {
+          score: normalSpeed * massFactor * 1.35 + tangentialSpeed * 0.35 + compression * 0.45,
+          normalSpeed,
+          relativeSpeed,
+          maxSpeed
+        };
+      },
+
+      queueBodyForRemoval(body) {
+        if (!this.isBodyInWorld(body) || body.isStatic) {
+          return;
+        }
+
+        this.pendingBodyRemovals.add(body);
+      },
+
+      queueTntExplosion(body) {
+        if (!this.isBodyInWorld(body) || body.isStatic) {
+          return;
+        }
+
+        this.pendingTntExplosions.add(body);
+      },
+
+      flushPendingDestruction() {
+        while (this.pendingTntExplosions.size) {
+          const queuedTntBodies = Array.from(this.pendingTntExplosions);
+          this.pendingTntExplosions.clear();
+
+          queuedTntBodies.forEach((tntBody) => {
+            if (this.isBodyInWorld(tntBody)) {
+              this.explodeTnt(tntBody);
+            }
+          });
+        }
+
+        if (!this.pendingBodyRemovals.size) {
+          return;
+        }
+
+        Array.from(this.pendingBodyRemovals).forEach((body) => {
+          if (!this.isBodyInWorld(body)) {
+            return;
+          }
+
+          this.World.remove(this.world, body);
+          this.removeBodyFromCollections(body);
+        });
+
+        this.pendingBodyRemovals.clear();
+      },
+
+      explodeTnt(tntBody) {
+        const center = { x: tntBody.position.x, y: tntBody.position.y };
+        const radius = this.tntConfig.radius;
+
+        this.Composite.allBodies(this.world).forEach((body) => {
+          if (!this.isBodyInWorld(body) || body.isStatic || body === tntBody) {
+            return;
+          }
+
+          const delta = this.Vector.sub(body.position, center);
+          const distance = Math.max(1, this.Vector.magnitude(delta));
+
+          if (distance > radius) {
+            return;
+          }
+
+          const direction = this.Vector.normalise(delta);
+          const falloff = 1 - distance / radius;
+          const forceMagnitude = this.tntConfig.force * falloff * body.mass;
+
+          this.Body.applyForce(body, body.position, {
+            x: direction.x * forceMagnitude,
+            y: direction.y * forceMagnitude - forceMagnitude * 0.18
+          });
+
+          if (body.isTnt && falloff > 0.3) {
+            this.queueTntExplosion(body);
+            return;
+          }
+
+          if (body.isDestructible) {
+            const blastDamage = this.tntConfig.triggerThreshold * 2.1 * falloff;
+            body.structureHealth -= blastDamage;
+
+            if (blastDamage >= body.breakThreshold * 0.7 || body.structureHealth <= 0) {
+              this.queueBodyForRemoval(body);
+            }
+          }
+        });
+
+        this.queueBodyForRemoval(tntBody);
+      },
+
+      removeBodyFromCollections(body) {
+        const removeFrom = (list) => list.filter((candidate) => candidate && candidate !== body);
+
+        this.woodBodies = removeFrom(this.woodBodies);
+        this.stoneBodies = removeFrom(this.stoneBodies);
+        this.glassBodies = removeFrom(this.glassBodies);
+        this.crateBodies = removeFrom(this.crateBodies);
+        this.tntBodies = removeFrom(this.tntBodies);
+        this.pigBodies = removeFrom(this.pigBodies);
       },
 
       drawTrajectoryDots() {

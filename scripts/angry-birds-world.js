@@ -149,82 +149,155 @@
         this.World.add(this.world, [this.bird, this.slingshotConstraint]);
       },
 
+      createStructureBlock(x, y, width, height, material, spriteMeta = {}, extraOptions = {}) {
+        const materialConfig = this.blockMaterialConfig[material];
+        const body = this.Bodies.rectangle(x, y, width, height, {
+          density: materialConfig.density,
+          friction: materialConfig.friction,
+          frictionStatic: materialConfig.frictionStatic,
+          frictionAir: materialConfig.frictionAir,
+          restitution: materialConfig.restitution,
+          slop: 0.01,
+          collisionFilter: {
+            category: this.collisionCategories.default
+          },
+          render: this.transparentRender,
+          ...extraOptions
+        });
+
+        body.materialType = material;
+        body.isDestructible = true;
+        body.isTnt = material === "tnt";
+        body.structureHealth = materialConfig.health;
+        body.breakThreshold = materialConfig.breakThreshold;
+        // 구조물은 발사 전까지는 절대 파괴되지 않게 잠가 둡니다.
+        // 지금 단계에서는 "먼저 탑이 보이고, 새가 맞았을 때만 부서지는 것"이 더 중요하므로
+        // 발사 직후 gameplay 쪽에서 이 값을 실제 timestamp로 갱신해 활성화합니다.
+        body.damageEnabledAt = Number.POSITIVE_INFINITY;
+        body.minImpactSpeed = material === "stone" ? 3.6 : material === "wood" ? 2.8 : material === "ice" ? 2.2 : 2.4;
+        body.minImpactScore = material === "stone" ? 9 : material === "wood" ? 6.5 : material === "ice" ? 4.25 : 5;
+
+        this.attachBlockSprite(body, {
+          material,
+          width,
+          height,
+          ...spriteMeta
+        });
+
+        const inertiaMultiplier = material === "stone" ? 4.4 : material === "wood" ? 2.6 : 1.6;
+        this.Body.setInertia(body, body.inertia * inertiaMultiplier);
+        return body;
+      },
+
       createShowcaseObjects() {
-        // ?源?援ъ“臾쇱? "媛留뚰엳 ?덉뼱??臾대꼫吏吏 ?딅뒗" 履쎌쑝濡??ㅼ떆 諛곗튂?⑸땲??
-        // 湲곗??좎? ?源?諛쒗뙋 ?쀫㈃(686)?대ŉ, 紐⑤뱺 遺?덉씠 洹??꾩뿉 ?먯뿰?ㅻ읇寃??뱁엳?꾨줉 怨꾩궛?⑸땲??
-        const platformTopY = 626;
+        // 우측 타워는 이제 "도형을 늘려서 텍스처를 얹는 방식"이 아니라,
+        // blocks.png 안의 L / M / S 원본 비율을 그대로 축소한 뒤 쌓는 방식으로 만듭니다.
+        // 즉, 가로 부재는 가로 비율 그대로, 세로 기둥은 같은 스프라이트를 90도 회전해 사용합니다.
+        const groups = this.spriteFrames.objects.blockSpriteGroups;
+        const horizontalScale = 0.17;
+        const tntScale = 0.16;
+        const platformTopY = this.targetIslandBody.position.y - 9;
+        const towerCenterX = 975;
 
-        const leftColumn = this.Bodies.rectangle(919, 560, 10, 132, {
-          friction: 0.95,
-          frictionStatic: 1.8,
-          restitution: 0.01,
-          slop: 0.01,
-          collisionFilter: {
-            category: this.collisionCategories.default
-          },
-          render: this.transparentRender
+        const getScaledSize = (frame, scale) => ({
+          width: Math.round(frame.w * scale),
+          height: Math.round(frame.h * scale)
         });
 
-        const rightColumn = this.Bodies.rectangle(1031, 560, 10, 132, {
-          friction: 0.95,
-          frictionStatic: 1.8,
-          restitution: 0.01,
-          slop: 0.01,
-          collisionFilter: {
-            category: this.collisionCategories.default
-          },
-          render: this.transparentRender
+        const getHorizontalBlockSpec = (frames, scale) => {
+          const baseFrame = frames[0];
+          const size = getScaledSize(baseFrame, scale);
+          return {
+            frames,
+            width: size.width,
+            height: size.height,
+            baseRotation: 0
+          };
+        };
+
+        const getVerticalBlockSpec = (frames, scale) => {
+          const baseFrame = frames[0];
+          const size = getScaledSize(baseFrame, scale);
+          return {
+            frames,
+            width: size.height,
+            height: size.width,
+            baseRotation: Math.PI / 2
+          };
+        };
+
+        const sStone = getHorizontalBlockSpec(groups.S.stone, horizontalScale);
+        const sIce = getHorizontalBlockSpec(groups.S.ice, horizontalScale);
+        const sWood = getHorizontalBlockSpec(groups.S.wood, horizontalScale);
+        const lWood = getHorizontalBlockSpec(groups.L.wood, horizontalScale);
+        const mStoneVertical = getVerticalBlockSpec(groups.M.stone, horizontalScale);
+        const mIceVertical = getVerticalBlockSpec(groups.M.ice, horizontalScale);
+        const tntFrame = this.spriteFrames.objects.tntBox;
+        const tntSize = getScaledSize(tntFrame, tntScale);
+
+        const baseFootY = platformTopY - sStone.height / 2;
+        const baseColumnY = baseFootY - sStone.height / 2 - mStoneVertical.height / 2;
+        const mainBeamY = baseColumnY - mStoneVertical.height / 2 - lWood.height / 2;
+        const innerShelfY = baseColumnY + 8;
+        const upperColumnY = mainBeamY - lWood.height / 2 - mIceVertical.height / 2;
+        const topBeamY = upperColumnY - mIceVertical.height / 2 - sWood.height / 2;
+        const topCapY = topBeamY - sWood.height * 1.15;
+
+        const baseLeftX = towerCenterX - 58;
+        const baseRightX = towerCenterX + 58;
+        const upperLeftX = towerCenterX - 31;
+        const upperRightX = towerCenterX + 31;
+        const outerFootOffset = 58;
+
+        const leftStoneFoot = this.createStructureBlock(towerCenterX - outerFootOffset, baseFootY, sStone.width, sStone.height, "stone", {
+          frames: sStone.frames
+        });
+        const centerStoneFoot = this.createStructureBlock(towerCenterX, baseFootY, sStone.width, sStone.height, "stone", {
+          frames: sStone.frames
+        });
+        const rightStoneFoot = this.createStructureBlock(towerCenterX + outerFootOffset, baseFootY, sStone.width, sStone.height, "stone", {
+          frames: sStone.frames
         });
 
-        const upperLeftColumn = this.Bodies.rectangle(944, 439, 10, 86, {
-          friction: 0.95,
-          frictionStatic: 1.8,
-          restitution: 0.01,
-          slop: 0.01,
-          collisionFilter: {
-            category: this.collisionCategories.default
-          },
-          render: this.transparentRender
+        const baseStoneLeft = this.createStructureBlock(baseLeftX, baseColumnY, mStoneVertical.width, mStoneVertical.height, "stone", {
+          frames: mStoneVertical.frames,
+          baseRotation: mStoneVertical.baseRotation
+        });
+        const baseStoneRight = this.createStructureBlock(baseRightX, baseColumnY, mStoneVertical.width, mStoneVertical.height, "stone", {
+          frames: mStoneVertical.frames,
+          baseRotation: mStoneVertical.baseRotation
         });
 
-        const upperRightColumn = this.Bodies.rectangle(1006, 439, 10, 86, {
-          friction: 0.95,
-          frictionStatic: 1.8,
-          restitution: 0.01,
-          slop: 0.01,
-          collisionFilter: {
-            category: this.collisionCategories.default
-          },
-          render: this.transparentRender
+        const tntShelf = this.createStructureBlock(towerCenterX, innerShelfY, sIce.width, sIce.height, "ice", {
+          frames: sIce.frames
         });
 
-        const lowerBeam = this.Bodies.rectangle(975, 488, 122, 12, {
-          friction: 0.95,
-          frictionStatic: 1.8,
-          restitution: 0.01,
-          slop: 0.01,
-          collisionFilter: {
-            category: this.collisionCategories.default
-          },
-          render: this.transparentRender
+        const mainWoodBeam = this.createStructureBlock(towerCenterX, mainBeamY, lWood.width, lWood.height, "wood", {
+          frames: lWood.frames
         });
 
-        const midBeam = this.Bodies.rectangle(975, 391, 72, 10, {
-          friction: 0.95,
-          frictionStatic: 1.8,
-          restitution: 0.01,
-          slop: 0.01,
-          collisionFilter: {
-            category: this.collisionCategories.default
-          },
-          render: this.transparentRender
+        const upperIceLeft = this.createStructureBlock(upperLeftX, upperColumnY, mIceVertical.width, mIceVertical.height, "ice", {
+          frames: mIceVertical.frames,
+          baseRotation: mIceVertical.baseRotation
+        });
+        const upperIceRight = this.createStructureBlock(upperRightX, upperColumnY, mIceVertical.width, mIceVertical.height, "ice", {
+          frames: mIceVertical.frames,
+          baseRotation: mIceVertical.baseRotation
         });
 
-        const pigLarge = this.Bodies.circle(975, 454, 28, {
+        const topWoodBeam = this.createStructureBlock(towerCenterX, topBeamY, sWood.width, sWood.height, "wood", {
+          frames: sWood.frames
+        });
+
+        const tntBlock = this.createStructureBlock(towerCenterX, innerShelfY - sIce.height / 2 - tntSize.height / 2, tntSize.width, tntSize.height, "tnt", {
+          frame: tntFrame
+        });
+
+        const pigLarge = this.Bodies.circle(towerCenterX, mainBeamY - lWood.height / 2 - 24, 24, {
           restitution: 0.05,
-          density: 0.0021,
-          friction: 0.9,
-          frictionStatic: 1.4,
+          density: 0.0019,
+          friction: 0.86,
+          frictionStatic: 1.3,
           frictionAir: 0.01,
           slop: 0.01,
           collisionFilter: {
@@ -233,11 +306,11 @@
           render: this.transparentRender
         });
 
-        const pigSmall = this.Bodies.circle(975, 362, 24, {
+        const pigSmall = this.Bodies.circle(towerCenterX, topBeamY - sWood.height / 2 - 21, 21, {
           restitution: 0.05,
-          density: 0.0018,
-          friction: 0.9,
-          frictionStatic: 1.4,
+          density: 0.0017,
+          friction: 0.86,
+          frictionStatic: 1.3,
           frictionAir: 0.01,
           slop: 0.01,
           collisionFilter: {
@@ -246,74 +319,29 @@
           render: this.transparentRender
         });
 
-        this.glassBodies = [
-          leftColumn,
-          rightColumn,
-          upperLeftColumn,
-          upperRightColumn
+        const topCap = this.createStructureBlock(towerCenterX, topCapY, sStone.width, sStone.height, "stone", {
+          frames: sStone.frames
+        });
+
+        this.stoneBodies = [
+          leftStoneFoot,
+          centerStoneFoot,
+          rightStoneFoot,
+          baseStoneLeft,
+          baseStoneRight,
+          topCap
         ];
-        this.woodBodies = [lowerBeam, midBeam];
+        this.woodBodies = [mainWoodBeam, topWoodBeam];
+        this.glassBodies = [tntShelf, upperIceLeft, upperIceRight];
+        this.tntBodies = [tntBlock];
         this.pigBodies = [pigLarge, pigSmall];
         this.crateBodies = [];
 
-        // 釉붾줉? ?앹꽦 ?쒖젏???ㅽ봽?쇱씠??諛⑺뼢怨?湲곗? ?ш린瑜?怨좎젙?⑸땲??
-        // 異⑸룎 ?꾩뿉 body.bounds媛 ?뚯쟾 ?뚮Ц??諛붾뚮뜑?쇰룄, ?뚮뜑 ?꾨젅????낆씠
-        // 留ㅻ쾲 諛붾뚯? ?딄쾶 ?댁꽌 "留욌뒗 ?쒓컙 ?ㅻⅨ 釉붾줉?쇰줈 ?뚯븘媛 蹂댁씠?? 臾몄젣瑜?以꾩엯?덈떎.
-        this.attachBlockSprite(leftColumn, {
-          frame: this.spriteFrames.objects.iceColumnClean,
-          baseRotation: Math.PI / 2,
-          material: "ice",
-          width: 132,
-          height: 10
-        });
-        this.attachBlockSprite(rightColumn, {
-          frame: this.spriteFrames.objects.iceColumnClean,
-          baseRotation: Math.PI / 2,
-          material: "ice",
-          width: 132,
-          height: 10
-        });
-        this.attachBlockSprite(upperLeftColumn, {
-          frame: this.spriteFrames.objects.iceColumnClean,
-          baseRotation: Math.PI / 2,
-          material: "ice",
-          width: 86,
-          height: 10
-        });
-        this.attachBlockSprite(upperRightColumn, {
-          frame: this.spriteFrames.objects.iceColumnClean,
-          baseRotation: Math.PI / 2,
-          material: "ice",
-          width: 86,
-          height: 10
-        });
-        this.attachBlockSprite(lowerBeam, {
-          frame: this.spriteFrames.objects.woodBeamClean,
-          material: "wood",
-          width: 122,
-          height: 12
-        });
-        this.attachBlockSprite(midBeam, {
-          frame: this.spriteFrames.objects.woodBeamClean,
-          material: "wood",
-          width: 72,
-          height: 10
-        });
-        [...this.glassBodies, ...this.woodBodies].forEach((body) => {
-          body.friction = 1;
-          body.frictionStatic = 2;
-          body.frictionAir = 0.01;
-          body.restitution = 0.01;
-          this.Body.setInertia(body, body.inertia * 4.2);
-        });
-
         this.World.add(this.world, [
-          leftColumn,
-          rightColumn,
-          upperLeftColumn,
-          upperRightColumn,
-          lowerBeam,
-          midBeam,
+          ...this.stoneBodies,
+          ...this.woodBodies,
+          ...this.glassBodies,
+          ...this.tntBodies,
           pigLarge,
           pigSmall
         ]);
@@ -361,6 +389,8 @@
           this.Body.setAngularVelocity(this.bird, 0);
           this.Body.setAngle(this.bird, 0);
         });
+
+        this.registerDestructionEvents();
       },
 
       bindResize() {

@@ -1,4 +1,143 @@
 ﻿(function () {
+  // blocks.png 단일 아틀라스에서 사용할 크롭 좌표입니다.
+  // 실제 스프라이트 기준으로 수정이 필요하면 이 객체의 숫자만 바꾸면 됩니다.
+  const BLOCK_SPRITE_GROUPS = Object.freeze({
+    // 사용자 정의 기준:
+    // L_* = 긴 가로 빔 묶음
+    // M_* = 중간 크기 빔/기둥 묶음
+    // 각 배열의 0~3 인덱스는 1단계 ~ 4단계 파손 상태를 의미합니다.
+    L: {
+      wood: [
+        { x: 1500, y: 2384, w: 812, h: 75 },
+        { x: 2320, y: 2384, w: 812, h: 75 },
+        { x: 3144, y: 2384, w: 812, h: 75 },
+        { x: 1500, y: 2470, w: 812, h: 75 }
+      ],
+      ice: [
+        { x: 2320, y: 2470, w: 828, h: 75 },
+        { x: 3144, y: 2470, w: 828, h: 75 },
+        { x: 1500, y: 2549, w: 812, h: 75 },
+        { x: 2320, y: 2549, w: 828, h: 75 }
+      ],
+      stone: [
+        { x: 3144, y: 2549, w: 812, h: 75 },
+        { x: 1500, y: 2632, w: 812, h: 75 },
+        { x: 2320, y: 2632, w: 812, h: 75 },
+        { x: 3144, y: 2632, w: 812, h: 75 }
+      ]
+    },
+
+    M: {
+      stone: [
+        { x: 1500, y: 2720, w: 667, h: 78 },
+        { x: 1500, y: 2972, w: 667, h: 78 },
+        { x: 2183, y: 2822, w: 667, h: 78 },
+        { x: 2183, y: 3074, w: 667, h: 78 }
+      ],
+      wood: [
+        { x: 1500, y: 2804, w: 667, h: 78 },
+        { x: 1500, y: 3058, w: 667, h: 78 },
+        { x: 2183, y: 2904, w: 667, h: 78 },
+        { x: 2880, y: 2746, w: 667, h: 78 }
+      ],
+      ice: [
+        { x: 2880, y: 2832, w: 667, h: 78 },
+        { x: 2183, y: 2972, w: 667, h: 78 },
+        { x: 2183, y: 2988, w: 667, h: 78 },
+        { x: 2880, y: 2832, w: 667, h: 78 }
+      ]
+    },
+
+    S: {
+      wood: [
+        { x: 2880, y: 3080, w: 330, h: 77 },
+        { x: 3216, y: 2915, w: 330, h: 77 },
+        { x: 3582, y: 2758, w: 330, h: 77 },
+        { x: 3582, y: 3108, w: 330, h: 77 }
+      ],
+      ice: [
+        { x: 2880, y: 2995, w: 330, h: 77 },
+        { x: 3216, y: 3079, w: 330, h: 77 },
+        { x: 3582, y: 2911, w: 330, h: 77 },
+        { x: 3582, y: 3021, w: 330, h: 77 }
+      ],
+      stone: [
+        { x: 2880, y: 2914, w: 330, h: 77 },
+        { x: 2880, y: 3166, w: 330, h: 77 },
+        { x: 3216, y: 2996, w: 330, h: 77 },
+        { x: 3582, y: 2843, w: 330, h: 77 }
+      ]
+    },
+
+    tnt: {
+      default: { x: 662, y: 3794, w: 276, h: 282 }
+    }
+  });
+
+  const BLOCK_SPRITE_FRAMES = Object.freeze({
+    woodBeam: BLOCK_SPRITE_GROUPS.L.wood[0],
+    woodBeamClean: BLOCK_SPRITE_GROUPS.L.wood[0],
+    woodMedium: BLOCK_SPRITE_GROUPS.M.wood[0],
+    woodSquare: BLOCK_SPRITE_GROUPS.M.wood[0],
+
+    iceBeam: BLOCK_SPRITE_GROUPS.L.ice[0],
+    iceBeamClean: BLOCK_SPRITE_GROUPS.L.ice[0],
+    iceColumnClean: BLOCK_SPRITE_GROUPS.M.ice[0],
+    iceSquare: BLOCK_SPRITE_GROUPS.M.ice[0],
+
+    stoneBeam: BLOCK_SPRITE_GROUPS.L.stone[0],
+    stoneBeamClean: BLOCK_SPRITE_GROUPS.L.stone[0],
+    stoneMedium: BLOCK_SPRITE_GROUPS.M.stone[0],
+    stoneSquare: BLOCK_SPRITE_GROUPS.M.stone[0],
+
+    tntBox: BLOCK_SPRITE_GROUPS.tnt.default
+  });
+
+  const BLOCK_MATERIAL_CONFIG = Object.freeze({
+    wood: {
+      density: 0.0028,
+      friction: 0.82,
+      frictionStatic: 1.5,
+      frictionAir: 0.01,
+      restitution: 0.04,
+      health: 42,
+      breakThreshold: 25
+    },
+    ice: {
+      density: 0.0014,
+      friction: 0.08,
+      frictionStatic: 0.15,
+      frictionAir: 0.006,
+      restitution: 0.03,
+      health: 24,
+      breakThreshold: 14
+    },
+    stone: {
+      density: 0.0056,
+      friction: 0.95,
+      frictionStatic: 1.95,
+      frictionAir: 0.012,
+      restitution: 0.015,
+      health: 75,
+      breakThreshold: 42
+    },
+    tnt: {
+      density: 0.0024,
+      friction: 0.74,
+      frictionStatic: 1.2,
+      frictionAir: 0.01,
+      restitution: 0.02,
+      health: 20,
+      breakThreshold: 12
+    }
+  });
+
+  const TNT_CONFIG = Object.freeze({
+    triggerThreshold: 12,
+    radius: 200,
+    force: 0.032
+  });
+
   class AngryBirdsBootstrap {
     constructor() {
       // 寃뚯엫??湲곗? 醫뚰몴怨꾩엯?덈떎. ?댄썑 紐⑤뱺 諛곗튂 怨꾩궛? ???ш린瑜?湲곗??쇰줈 吏꾪뻾?⑸땲??
@@ -15,6 +154,7 @@
       this.World = Matter.World;
       this.Bodies = Matter.Bodies;
       this.Body = Matter.Body;
+      this.Composite = Matter.Composite;
       this.Constraint = Matter.Constraint;
       this.Mouse = Matter.Mouse;
       this.MouseConstraint = Matter.MouseConstraint;
@@ -32,9 +172,22 @@
       this.launcherIslandBody = null;
       this.targetIslandBody = null;
       this.woodBodies = [];
+      this.stoneBodies = [];
       this.glassBodies = [];
       this.crateBodies = [];
+      this.tntBodies = [];
       this.pigBodies = [];
+      this.pendingBodyRemovals = new Set();
+      this.pendingTntExplosions = new Set();
+      this.blockMaterialConfig = BLOCK_MATERIAL_CONFIG;
+      this.tntConfig = TNT_CONFIG;
+      this.showBlockAtlasPreview = false;
+      this.blockAtlasPreview = {
+        x: 640,
+        y: 292,
+        width: 760,
+        height: 430
+      };
 
       // requestAnimationFrame ID瑜???ν빐 ?먮㈃ 異뷀썑 ?뺤?/?ъ떆???쒖뼱媛 ?ъ썙吏묐땲??
       this.renderFrameId = null;
@@ -270,20 +423,14 @@
         // ?곷떒 3媛??됱? ?ъ쭏蹂?wood / ice / stone) 援ъ“媛 ?쇱젙?⑸땲??
         // ?꾩옱 ?ㅽ뀒?댁???紐⑹옱? ?쇱쓬 湲곕뫁 ?꾩＜?대?濡??꾩슂??移몃쭔 ?대쫫?쇰줈 留ㅽ븨?⑸땲??
         this.spriteFrames.objects = {
-          woodBeam: { x: 2276, y: 2394, w: 1098, h: 72 },
+          ...BLOCK_SPRITE_FRAMES,
+          blockSpriteGroups: BLOCK_SPRITE_GROUPS,
           woodBeamCore: { x: 2308, y: 2402, w: 1034, h: 56 },
-          woodBeamClean: { x: 2368, y: 2400, w: 690, h: 56 },
-          woodSquare: { x: 2038, y: 808, w: 196, h: 196 },
-          iceBeam: { x: 2276, y: 2478, w: 1098, h: 78 },
           iceBeamCore: { x: 2308, y: 2488, w: 1034, h: 58 },
-          iceBeamClean: { x: 2332, y: 2484, w: 700, h: 62 },
-          iceColumnClean: { x: 2700, y: 2490, w: 120, h: 54 },
           slingshotPieceRight: { x: 38, y: 5, w: 38, h: 199 },
           slingshotPieceLeft: { x: 105, y: 7, w: 43, h: 124 },
           slingshotPull50: { x: 322, y: 253, w: 80, h: 194 },
-          slingshotPull100: { x: 443, y: 255, w: 97, h: 180 },
-          iceSquare: { x: 548, y: 784, w: 312, h: 306 },
-          stoneSquare: { x: 258, y: 594, w: 286, h: 286 }
+          slingshotPull100: { x: 443, y: 255, w: 97, h: 180 }
         };
       }
     }
@@ -303,8 +450,20 @@
       }));
     }
 
+    isBodyInWorld(body) {
+      return Boolean(
+        body &&
+        this.world &&
+        this.Composite &&
+        this.Composite.get(this.world, body.id, "body")
+      );
+    }
+
+    isRenderableBody(body) {
+      return this.isBodyInWorld(body) && !this.pendingBodyRemovals.has(body);
+    }
+
   }
 
   window.AngryBirdsBootstrap = AngryBirdsBootstrap;
 })();
-
