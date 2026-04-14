@@ -844,10 +844,12 @@
         this.slingshotAnchor.position.x = 250;
         this.slingshotAnchor.position.y = slingshotFootY;
         this.slingshotFootY = slingshotFootY;
+        const frontBaseX = this.slingshotAnchor.position.x + this.slingshotFrontBaseOffsetX;
 
-        // 湲곕낯 ?곹깭?먯꽌 ?덇? ???ы겕 ?ъ씠???뱁? 蹂댁씠???꾩튂瑜??ㅼ젣 臾쇰━ ?듭빱濡??ъ슜?⑸땲??
-        this.anchorPoint.x = this.slingshotAnchor.position.x + 4;
-        this.anchorPoint.y = this.slingshotFootY - 122;
+        // 물리 앵커도 앞쪽 기둥의 바닥 중심을 기준으로 계산합니다.
+        // 이렇게 해야 기본/50%/100% 스프라이트가 바뀌어도 새총이 좌우로 밀리지 않습니다.
+        this.anchorPoint.x = frontBaseX + this.loadedBirdOffsetFromFrontBase.x;
+        this.anchorPoint.y = this.slingshotFootY + this.loadedBirdOffsetFromFrontBase.y;
         this.pointerWorldPosition.x = this.anchorPoint.x;
         this.pointerWorldPosition.y = this.anchorPoint.y;
       },
@@ -875,8 +877,17 @@
       getSlingshotRenderData() {
         const baseX = this.slingshotAnchor.position.x;
         const footY = this.slingshotFootY;
+        const frontBaseX = baseX + this.slingshotFrontBaseOffsetX;
         const state = this.getSlingshotStateByDistance(this.getSlingshotPullDistance());
         const shouldDrawLoadedBird = Boolean(this.bird) && !this.hasBirdLaunched;
+        const idleRightPieceX = frontBaseX - this.idleRightPiece.anchorX;
+        const idleRightPieceY = footY - this.idleRightPiece.height + this.idleRightPiece.offsetY;
+        const idleLeftPieceX = idleRightPieceX + this.idleLeftPiece.offsetXFromRightPiece;
+        const idleLeftPieceY = idleRightPieceY + this.idleLeftPiece.offsetYFromRightPiece;
+        const pulled50X = frontBaseX - this.pullSprite50.anchorX;
+        const pulled50Y = footY - this.pullSprite50.height + this.pullSprite50.offsetY;
+        const pulled100X = frontBaseX - this.pullSprite100.anchorX;
+        const pulled100Y = footY - this.pullSprite100.height + this.pullSprite100.offsetY;
 
         return {
           state,
@@ -888,55 +899,47 @@
           idle: {
             rightPiece: {
               frame: this.spriteFrames.objects.slingshotPieceRight,
-              x: baseX + this.idleRightPiece.offsetX,
-              y: footY - this.idleRightPiece.height + this.idleRightPiece.offsetY,
+              x: idleRightPieceX,
+              y: idleRightPieceY,
               width: this.idleRightPiece.width,
               height: this.idleRightPiece.height
             },
             leftPiece: {
               frame: this.spriteFrames.objects.slingshotPieceLeft,
-              x: baseX + this.idleLeftPiece.offsetX,
-              y: footY - this.idleLeftPiece.height + this.idleLeftPiece.offsetY,
+              x: idleLeftPieceX,
+              y: idleLeftPieceY,
               width: this.idleLeftPiece.width,
               height: this.idleLeftPiece.height
-            },
-            bandBackStart: {
-              x: baseX + this.idleBandOffsets.backStartX,
-              y: footY + this.idleBandOffsets.backStartY
-            },
-            bandFrontStart: {
-              x: baseX + this.idleBandOffsets.frontStartX,
-              y: footY + this.idleBandOffsets.frontStartY
             }
           },
           pulled50: {
             frame: this.spriteFrames.objects.slingshotPull50,
-            x: baseX + this.pullSprite50.offsetX,
-            y: footY - this.pullSprite50.height + this.pullSprite50.offsetY,
+            x: pulled50X,
+            y: pulled50Y,
             width: this.pullSprite50.width,
             height: this.pullSprite50.height,
             bandBackStart: {
-              x: baseX + this.pullSprite50.bandBackOffsetX,
-              y: footY + this.pullSprite50.bandBackOffsetY
+              x: pulled50X + this.pullSprite50.bandBackLocalX,
+              y: pulled50Y + this.pullSprite50.bandBackLocalY
             },
             bandFrontStart: {
-              x: baseX + this.pullSprite50.bandFrontOffsetX,
-              y: footY + this.pullSprite50.bandFrontOffsetY
+              x: pulled50X + this.pullSprite50.bandFrontLocalX,
+              y: pulled50Y + this.pullSprite50.bandFrontLocalY
             }
           },
           pulled100: {
             frame: this.spriteFrames.objects.slingshotPull100,
-            x: baseX + this.pullSprite100.offsetX,
-            y: footY - this.pullSprite100.height + this.pullSprite100.offsetY,
+            x: pulled100X,
+            y: pulled100Y,
             width: this.pullSprite100.width,
             height: this.pullSprite100.height,
             bandBackStart: {
-              x: baseX + this.pullSprite100.bandBackOffsetX,
-              y: footY + this.pullSprite100.bandBackOffsetY
+              x: pulled100X + this.pullSprite100.bandBackLocalX,
+              y: pulled100Y + this.pullSprite100.bandBackLocalY
             },
             bandFrontStart: {
-              x: baseX + this.pullSprite100.bandFrontOffsetX,
-              y: footY + this.pullSprite100.bandFrontOffsetY
+              x: pulled100X + this.pullSprite100.bandFrontLocalX,
+              y: pulled100Y + this.pullSprite100.bandFrontLocalY
             }
           }
         };
@@ -1049,6 +1052,9 @@
           !renderData.shouldDrawLoadedBird
         ) {
           this.drawIdleSlingshot(ctx, renderData);
+          if (!renderData.shouldDrawLoadedBird && this.bird) {
+            this.drawBird(ctx, this.bird.position);
+          }
           return;
         }
 
