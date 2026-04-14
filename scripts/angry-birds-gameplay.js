@@ -196,10 +196,19 @@
 
           const radius = Math.max(1.8, 5 - index * 0.22);
           const alpha = Math.max(0.16, 0.9 - index * 0.055);
+          const strokeAlpha = Math.max(0.22, alpha * 0.82);
+          const strokeWidth = Math.max(1, radius * 0.26);
 
+          // 밝은 하늘/구름 배경 위에서도 점선이 묻히지 않도록,
+          // 흰 점 바깥에 짙은 테두리를 먼저 한 번 그린 뒤 안을 채웁니다.
+          // 이렇게 하면 원래의 Angry Birds식 "동그란 예측 점" 느낌은 유지하면서도
+          // 어떤 배경색 위에서도 또렷하게 보입니다.
+          ctx.strokeStyle = `rgba(88, 120, 146, ${strokeAlpha})`;
+          ctx.lineWidth = strokeWidth;
           ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
           ctx.beginPath();
           ctx.arc(previewBody.position.x, previewBody.position.y, radius, 0, Math.PI * 2);
+          ctx.stroke();
           ctx.fill();
         }
 

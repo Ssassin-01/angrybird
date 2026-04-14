@@ -874,24 +874,56 @@
         return this.SLINGSHOT_STATE.PULLED_100;
       },
 
+      getSlingshotPullDirection() {
+        if (!this.bird || this.hasBirdLaunched) {
+          return "left";
+        }
+
+        return this.bird.position.x >= this.anchorPoint.x ? "right" : "left";
+      },
+
       getSlingshotRenderData() {
         const baseX = this.slingshotAnchor.position.x;
         const footY = this.slingshotFootY;
         const frontBaseX = baseX + this.slingshotFrontBaseOffsetX;
         const state = this.getSlingshotStateByDistance(this.getSlingshotPullDistance());
         const shouldDrawLoadedBird = Boolean(this.bird) && !this.hasBirdLaunched;
+        const pullDirection = this.getSlingshotPullDirection();
+        const isPullingRight =
+          shouldDrawLoadedBird &&
+          state !== this.SLINGSHOT_STATE.DEFAULT &&
+          pullDirection === "right";
         const idleRightPieceX = frontBaseX - this.idleRightPiece.anchorX;
         const idleRightPieceY = footY - this.idleRightPiece.height + this.idleRightPiece.offsetY;
         const idleLeftPieceX = idleRightPieceX + this.idleLeftPiece.offsetXFromRightPiece;
         const idleLeftPieceY = idleRightPieceY + this.idleLeftPiece.offsetYFromRightPiece;
-        const pulled50X = frontBaseX - this.pullSprite50.anchorX;
+        const pulled50AnchorX = isPullingRight
+          ? this.pullSprite50.width - this.pullSprite50.anchorX
+          : this.pullSprite50.anchorX;
+        const pulled50X = frontBaseX - pulled50AnchorX;
         const pulled50Y = footY - this.pullSprite50.height + this.pullSprite50.offsetY;
-        const pulled100X = frontBaseX - this.pullSprite100.anchorX;
+        const pulled100AnchorX = isPullingRight
+          ? this.pullSprite100.width - this.pullSprite100.anchorX
+          : this.pullSprite100.anchorX;
+        const pulled100X = frontBaseX - pulled100AnchorX;
         const pulled100Y = footY - this.pullSprite100.height + this.pullSprite100.offsetY;
+        const pulled50BackLocalX = isPullingRight
+          ? this.pullSprite50.width - this.pullSprite50.bandBackLocalX
+          : this.pullSprite50.bandBackLocalX;
+        const pulled50FrontLocalX = isPullingRight
+          ? this.pullSprite50.width - this.pullSprite50.bandFrontLocalX
+          : this.pullSprite50.bandFrontLocalX;
+        const pulled100BackLocalX = isPullingRight
+          ? this.pullSprite100.width - this.pullSprite100.bandBackLocalX
+          : this.pullSprite100.bandBackLocalX;
+        const pulled100FrontLocalX = isPullingRight
+          ? this.pullSprite100.width - this.pullSprite100.bandFrontLocalX
+          : this.pullSprite100.bandFrontLocalX;
 
         return {
           state,
           shouldDrawLoadedBird,
+          pullDirection,
           idleBirdPosition: {
             x: this.anchorPoint.x + this.idleBirdOffset.x,
             y: this.anchorPoint.y + this.idleBirdOffset.y
@@ -914,31 +946,33 @@
           },
           pulled50: {
             frame: this.spriteFrames.objects.slingshotPull50,
+            flipX: isPullingRight,
             x: pulled50X,
             y: pulled50Y,
             width: this.pullSprite50.width,
             height: this.pullSprite50.height,
             bandBackStart: {
-              x: pulled50X + this.pullSprite50.bandBackLocalX,
+              x: pulled50X + pulled50BackLocalX,
               y: pulled50Y + this.pullSprite50.bandBackLocalY
             },
             bandFrontStart: {
-              x: pulled50X + this.pullSprite50.bandFrontLocalX,
+              x: pulled50X + pulled50FrontLocalX,
               y: pulled50Y + this.pullSprite50.bandFrontLocalY
             }
           },
           pulled100: {
             frame: this.spriteFrames.objects.slingshotPull100,
+            flipX: isPullingRight,
             x: pulled100X,
             y: pulled100Y,
             width: this.pullSprite100.width,
             height: this.pullSprite100.height,
             bandBackStart: {
-              x: pulled100X + this.pullSprite100.bandBackLocalX,
+              x: pulled100X + pulled100BackLocalX,
               y: pulled100Y + this.pullSprite100.bandBackLocalY
             },
             bandFrontStart: {
-              x: pulled100X + this.pullSprite100.bandFrontLocalX,
+              x: pulled100X + pulled100FrontLocalX,
               y: pulled100Y + this.pullSprite100.bandFrontLocalY
             }
           }
@@ -1001,22 +1035,23 @@
             ? renderData.pulled100
             : renderData.pulled50;
 
-        // ?밴릿 ?곹깭???곗륫 ?섎떒???꾩꽦 ?ъ쫰 ???μ쓣 ?곷땲??
-        // 蹂몄껜??drawImage濡?怨좎젙?섍퀬, 怨좊Т以꾨쭔 ??醫뚰몴瑜??곕씪媛???좎쑝濡??ㅼ떆 洹몃젮 以띾땲??
-        this.drawImageFrame(
-          ctx,
-          this.slingshotSprite,
-          pose.frame,
-          pose.x,
-          pose.y,
-          pose.width,
-          pose.height
-        );
-
         if (!renderData.shouldDrawLoadedBird) {
+          this.drawImageFrame(
+            ctx,
+            this.slingshotSprite,
+            pose.frame,
+            pose.x,
+            pose.y,
+            pose.width,
+            pose.height,
+            pose.flipX
+          );
           return;
         }
 
+        // 당기는 상태에서는 고무줄을 먼저 그리고,
+        // 그 위에 새총 본체 스프라이트를 덮어 그려서
+        // 끈이 가지 앞쪽으로 튀어나와 보이지 않고 "새총 뒤"에 걸린 것처럼 보이게 합니다.
         this.drawRubberBand(
           ctx,
           pose.bandBackStart.x,
@@ -1031,6 +1066,17 @@
           pose.bandFrontStart.y,
           birdPosition.x,
           birdPosition.y
+        );
+
+        this.drawImageFrame(
+          ctx,
+          this.slingshotSprite,
+          pose.frame,
+          pose.x,
+          pose.y,
+          pose.width,
+          pose.height,
+          pose.flipX
         );
 
         this.drawBird(ctx, birdPosition);
@@ -1820,8 +1866,22 @@
         );
       },
 
-      drawImageFrame(ctx, image, frame, x, y, width, height) {
+      drawImageFrame(ctx, image, frame, x, y, width, height, flipX = false) {
+        ctx.save();
+
+        if (flipX) {
+          // 우측으로 당길 때는 같은 스프라이트를 좌우 반전해 사용합니다.
+          // 중심과 바닥 기준점은 그대로 두고 이미지만 뒤집어야 하므로,
+          // 이미지 중앙으로 이동한 뒤 scale(-1, 1)로 반전해서 그립니다.
+          ctx.translate(x + width / 2, y + height / 2);
+          ctx.scale(-1, 1);
+          ctx.drawImage(image, frame.x, frame.y, frame.w, frame.h, -width / 2, -height / 2, width, height);
+          ctx.restore();
+          return;
+        }
+
         ctx.drawImage(image, frame.x, frame.y, frame.w, frame.h, x, y, width, height);
+        ctx.restore();
       },
 
       drawSpriteCentered(ctx, image, frame, x, y, width, height, rotation = 0, disableSmoothing = false) {
